@@ -1,0 +1,43 @@
+# Builds a web.config for a given environment by:
+#   1. Running Build-WebConfig.ps1 to produce a tokenized web.config
+#   2. Replacing #{...}# tokens with values from the linked variable group
+#   3. Publishing the finished web.config as a pipeline artifact
+#
+# Each stage links the corresponding webconfig-<env> variable group that was
+# created by Publish-VariableGroup.ps1.
+
+trigger:
+  branches:
+    include: [ main ]
+
+pool:
+  vmImage: windows-latest
+
+stages:
+  - stage: Dev
+    displayName: Build web.config (dev)
+    variables:
+      - group: webconfig-dev
+    jobs:
+      - job: Build
+        steps:
+          - template: pipeline/steps-build-webconfig.yml
+            parameters:
+              environment: dev
+
+  - stage: Prod
+    displayName: Build web.config (prod)
+    dependsOn: Dev
+    variables:
+      - group: webconfig-prod
+    jobs:
+      - deployment: Build
+        environment: prod   # enables approvals/checks in ADO Environments
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - template: pipeline/steps-build-webconfig.yml
+                  parameters:
+                    environment: prod

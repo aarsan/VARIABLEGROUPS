@@ -1,0 +1,4 @@
+{
+  "appSettings": ["LogLevel", "CDNEndpoint"],
+  "connectionStrings": ["DefaultConnection", "StorageConnection"]
+}

@@ -1,0 +1,28 @@
+# Reusable steps: generate web.config for ${{ parameters.environment }},
+# substitute tokens from the linked variable group, publish as artifact.
+parameters:
+  - name: environment
+    type: string
+
+steps:
+  - task: PowerShell@2
+    displayName: Generate tokenized web.config (${{ parameters.environment }})
+    inputs:
+      filePath: $(Build.SourcesDirectory)/Build-WebConfig.ps1
+      arguments: -Environment ${{ parameters.environment }} -OutputPath $(Build.ArtifactStagingDirectory)/web.config
+      pwsh: true
+
+  # Marketplace task: qetza.replacetokens.replacetokens-task.replacetokens@6
+  # Requires the "Replace Tokens" extension to be installed in your ADO org.
+  - task: replacetokens@6
+    displayName: Replace #{...}# tokens with variable group values
+    inputs:
+      root: $(Build.ArtifactStagingDirectory)
+      sources: web.config
+      tokenPattern: rm           # #{Var}# style
+      missingVarLog: error       # fail the build if any token is unresolved
+      logLevel: info
+
+  - publish: $(Build.ArtifactStagingDirectory)/web.config
+    artifact: webconfig-${{ parameters.environment }}
+    displayName: Publish web.config artifact

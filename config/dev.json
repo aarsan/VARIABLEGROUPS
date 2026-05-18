@@ -1,0 +1,4 @@
+{
+  "appSettings": ["LogLevel", "EnableFeatureX", "DevPortalUrl"],
+  "connectionStrings": ["DefaultConnection"]
+}
