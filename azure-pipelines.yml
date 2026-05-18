@@ -11,7 +11,7 @@ trigger:
     include: [ main ]
 
 pool:
-  vmImage: windows-latest
+  name: Default   # self-hosted agent pool; switch back to `vmImage: windows-latest` once MS-hosted parallelism is granted
 
 stages:
   - stage: Dev
