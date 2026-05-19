@@ -31,3 +31,14 @@ steps:
   - publish: $(Build.ArtifactStagingDirectory)/web.config
     artifact: webconfig-${{ parameters.environment }}
     displayName: Publish web.config artifact
+
+  - task: PowerShell@2
+    displayName: Print generated web.config (${{ parameters.environment }})
+    inputs:
+      targetType: inline
+      pwsh: true
+      script: |
+        $path = "$(Build.ArtifactStagingDirectory)/web.config"
+        Write-Host "----- BEGIN $path -----"
+        Get-Content -LiteralPath $path -Raw | Write-Host
+        Write-Host "----- END $path -----"
