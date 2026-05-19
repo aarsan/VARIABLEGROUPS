@@ -10,7 +10,7 @@ steps:
     inputs:
       filePath: $(Build.SourcesDirectory)/Build-WebConfig.ps1
       arguments: -Environment ${{ parameters.environment }} -OutputPath $(Build.ArtifactStagingDirectory)/web.config
-      pwsh: true
+      pwsh: false
 
   # Marketplace task: qetza.replacetokens.replacetokens-task.replacetokens@6
   # Requires the "Replace Tokens" extension to be installed in your ADO org.
