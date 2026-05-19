@@ -30,24 +30,17 @@ steps:
   # Pull env-prefixed secrets from Key Vault, then alias them under their bare
   # names so the existing #{Token}# names in web.config keep working.
   - ${{ if and(ne(parameters.vaultName, ''), gt(length(parameters.secretNames), 0)) }}:
-      - task: AzureCLI@2
+      - task: AzureKeyVault@2
         displayName: Fetch ${{ parameters.environment }} secrets from ${{ parameters.vaultName }}
         inputs:
           azureSubscription: ${{ parameters.serviceConnection }}
-          scriptType: pscore
-          scriptLocation: inlineScript
-          inlineScript: |
-            $env = "${{ parameters.environment }}"
-            $vault = "${{ parameters.vaultName }}"
-            $names = @(${{ join(',', parameters.secretNames) }}) | ForEach-Object { $_.Trim("'", '"', ' ') }
-            foreach ($n in $names) {
-              if (-not $n) { continue }
-              $secretName = "$env-$n"
-              Write-Host "Fetching $secretName from $vault"
-              $val = az keyvault secret show --vault-name $vault --name $secretName --query value -o tsv
-              if (-not $val) { Write-Error "Secret $secretName not found"; exit 1 }
-              Write-Host "##vso[task.setvariable variable=$n;issecret=true]$val"
-            }
+          KeyVaultName: ${{ parameters.vaultName }}
+          SecretsFilter: ${{ parameters.environment }}-*
+          RunAsPreJob: false
+
+      - ${{ each name in parameters.secretNames }}:
+          - pwsh: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
+            displayName: Alias secret ${{ name }}
 
   # Marketplace task: qetza.replacetokens.replacetokens-task.replacetokens@6
   # Requires the "Replace Tokens" extension to be installed in your ADO org.
