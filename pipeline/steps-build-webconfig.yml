@@ -7,6 +7,11 @@ parameters:
 steps:
   - task: PowerShell@2
     displayName: Generate tokenized web.config (${{ parameters.environment }})
+    env:
+      # Clear PSModulePath so pwsh 7 doesn't try to load Windows PowerShell 5.1
+      # modules (causes "TypeData already present" / Security module load errors
+      # on ARM Windows).
+      PSModulePath: ''
     inputs:
       filePath: $(Build.SourcesDirectory)/Build-WebConfig.ps1
       arguments: -Environment ${{ parameters.environment }} -OutputPath $(Build.ArtifactStagingDirectory)/web.config
