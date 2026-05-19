@@ -198,9 +198,10 @@ also deletes any leftover variable in the group that's now listed in
 One vault stores secrets for many environments. Storing them as
 `dev-DefaultConnection` / `prod-DefaultConnection` keeps them separated. The
 pipeline's `AzureKeyVault@2` task pulls only the matching prefix per stage
-(`SecretsFilter: dev-*`), then aliases each one back to its bare name
-(`DefaultConnection`) before the token-replacement step. That way the
-`#{Token}#` names in the generated `web.config` stay environment-agnostic.
+(via an explicit `secretsFilter` list like `dev-DefaultConnection`), then
+aliases each one back to its bare name (`DefaultConnection`) before the
+token-replacement step. That way the `#{Token}#` names in the generated
+`web.config` stay environment-agnostic.
 
 ---
 
@@ -222,10 +223,9 @@ trigger:
 pool:
   name: Default   # self-hosted
 
-variables:
-  KeyVaultName: Progger
-  KeyVaultServiceConnection: 'ahmet-azure-sub (...)'
-
+# Service-connection name and Key Vault name are inlined as template
+# parameters (compile-time) because `AzureKeyVault@2` resolves them during
+# pipeline validation server-side, before runtime `$(...)` macros expand.
 stages:
   - stage: Dev
     variables:
@@ -236,8 +236,9 @@ stages:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: dev
-              vaultName: $(KeyVaultName)
-              serviceConnection: $(KeyVaultServiceConnection)
+              vaultName: Progger
+              serviceConnection: Ahmet-Azure-Sub-V2
+              secretsFilter: dev-DefaultConnection
               secretNames:
                 - DefaultConnection
 
@@ -251,8 +252,9 @@ stages:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: prod
-              vaultName: $(KeyVaultName)
-              serviceConnection: $(KeyVaultServiceConnection)
+              vaultName: Progger
+              serviceConnection: Ahmet-Azure-Sub-V2
+              secretsFilter: prod-DefaultConnection,prod-StorageConnection
               secretNames:
                 - DefaultConnection
                 - StorageConnection
