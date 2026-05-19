@@ -11,12 +11,9 @@ trigger:
 pool:
   name: Default   # self-hosted agent pool; switch back to `vmImage: windows-latest` once MS-hosted parallelism is granted
 
-variables:
-  KeyVaultName: Progger
-  # Service connection id for `ahmet-azure-sub (a0fc4f7c-9c55-4151-b900-07761c35237c)`.
-  # Referencing by id avoids quoting issues with parentheses in the display name.
-  KeyVaultServiceConnection: '9ff0532e-317f-4fe7-8cdb-d772859ae9d8'
-
+# Service connection name + Key Vault name are referenced via template
+# parameters (resolved at compile time), not runtime $() variables, because
+# `AzureKeyVault@2` resolves them during pipeline validation server-side.
 stages:
   - stage: Dev
     displayName: Build web.config (dev)
@@ -28,8 +25,8 @@ stages:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: dev
-              vaultName: $(KeyVaultName)
-              serviceConnection: $(KeyVaultServiceConnection)
+              vaultName: Progger
+              serviceConnection: 'ahmet-azure-sub (a0fc4f7c-9c55-4151-b900-07761c35237c)'
               secretNames:
                 - DefaultConnection
 
@@ -44,8 +41,8 @@ stages:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: prod
-              vaultName: $(KeyVaultName)
-              serviceConnection: $(KeyVaultServiceConnection)
+              vaultName: Progger
+              serviceConnection: 'ahmet-azure-sub (a0fc4f7c-9c55-4151-b900-07761c35237c)'
               secretNames:
                 - DefaultConnection
                 - StorageConnection
