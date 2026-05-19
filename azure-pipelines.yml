@@ -31,13 +31,8 @@ stages:
     variables:
       - group: webconfig-prod
     jobs:
-      - deployment: Build
-        environment: prod   # enables approvals/checks in ADO Environments
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - checkout: self
-                - template: pipeline/steps-build-webconfig.yml
-                  parameters:
-                    environment: prod
+      - job: Build
+        steps:
+          - template: pipeline/steps-build-webconfig.yml
+            parameters:
+              environment: prod
