@@ -216,6 +216,14 @@ name (`DefaultConnection`) before the token-replacement step. That way the
   These groups appear in the **Library** UI with the key icon and a clear
   link to the vault.
 
+> **Why two groups per env?** ADO's "link to Azure Key Vault" toggle is
+> all-or-nothing per variable group: when it's on, *every* variable in the
+> group must come from the vault and you can't add plain literal values
+> alongside them. The standard pattern is therefore one plain group for
+> non-secrets + one KV-linked group for secrets, both referenced together in
+> the stage. They merge into the same variable scope at runtime, so steps
+> just see `$(LogLevel)` and `$(dev-DefaultConnection)` side by side.
+
 The template aliases each env-prefixed secret to its bare name, runs the
 [`qetza.replacetokens`](https://marketplace.visualstudio.com/items?itemName=qetza.replacetokens-task)
 marketplace task to substitute `#{Token}#` placeholders, and publishes the
