@@ -13,6 +13,9 @@ parameters:
   - name: secretNames
     type: object
     default: []
+  - name: secretsFilter
+    type: string
+    default: ''
 
 steps:
   - task: PowerShell@2
@@ -35,8 +38,12 @@ steps:
         inputs:
           azureSubscription: ${{ parameters.serviceConnection }}
           KeyVaultName: ${{ parameters.vaultName }}
-          SecretsFilter: ${{ parameters.environment }}-*
+          SecretsFilter: ${{ parameters.secretsFilter }}
           RunAsPreJob: false
+
+      - ${{ each name in parameters.secretNames }}:
+          - pwsh: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
+            displayName: Alias secret ${{ name }}
 
       - ${{ each name in parameters.secretNames }}:
           - pwsh: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"

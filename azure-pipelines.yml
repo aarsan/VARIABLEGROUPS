@@ -27,6 +27,7 @@ stages:
               environment: dev
               vaultName: Progger
               serviceConnection: Ahmet-Azure-Sub-V2
+              secretsFilter: dev-DefaultConnection
               secretNames:
                 - DefaultConnection
 
@@ -43,6 +44,7 @@ stages:
               environment: prod
               vaultName: Progger
               serviceConnection: Ahmet-Azure-Sub-V2
+              secretsFilter: prod-DefaultConnection,prod-StorageConnection
               secretNames:
                 - DefaultConnection
                 - StorageConnection
