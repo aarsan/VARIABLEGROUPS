@@ -24,7 +24,7 @@ steps:
     inputs:
       root: $(Build.ArtifactStagingDirectory)
       sources: web.config
-      tokenPattern: rm           # #{Var}# style
+      tokenPattern: default      # #{Var}# style
       missingVarLog: error       # fail the build if any token is unresolved
       logLevel: info
 
