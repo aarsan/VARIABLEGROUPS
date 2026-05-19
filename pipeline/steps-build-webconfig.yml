@@ -1,21 +1,13 @@
 # Reusable steps: generate web.config for ${{ parameters.environment }},
-# pull secrets from Azure Key Vault (env-prefixed), substitute tokens, and
+# alias env-prefixed secrets (already pulled by a Key-Vault-linked variable
+# group at stage scope) under their bare names, substitute tokens, and
 # publish as an artifact.
 parameters:
   - name: environment
     type: string
-  - name: vaultName
-    type: string
-    default: ''
-  - name: serviceConnection
-    type: string
-    default: ''
   - name: secretNames
     type: object
     default: []
-  - name: secretsFilter
-    type: string
-    default: ''
 
 steps:
   - task: PowerShell@2
@@ -30,29 +22,19 @@ steps:
       arguments: -Environment ${{ parameters.environment }} -OutputPath $(Build.ArtifactStagingDirectory)/web.config
       pwsh: true
 
-  # Pull env-prefixed secrets from Key Vault, then alias them under their bare
-  # names so the existing #{Token}# names in web.config keep working.
-  - ${{ if and(ne(parameters.vaultName, ''), gt(length(parameters.secretNames), 0)) }}:
-      - task: AzureKeyVault@2
-        displayName: Fetch ${{ parameters.environment }} secrets from ${{ parameters.vaultName }}
+  # Alias each env-prefixed secret variable (e.g. `dev-DefaultConnection`,
+  # provided by the `webconfig-<env>-secrets` Key-Vault-linked variable group)
+  # under its bare name so the existing #{Token}# names in web.config keep
+  # working.
+  - ${{ each name in parameters.secretNames }}:
+      - task: PowerShell@2
+        displayName: Alias secret ${{ name }}
+        env:
+          PSModulePath: ''
         inputs:
-          azureSubscription: ${{ parameters.serviceConnection }}
-          KeyVaultName: ${{ parameters.vaultName }}
-          SecretsFilter: ${{ parameters.secretsFilter }}
-          RunAsPreJob: false
-
-      - ${{ each name in parameters.secretNames }}:
-          - task: PowerShell@2
-            displayName: Alias secret ${{ name }}
-            env:
-              # Clear PSModulePath so pwsh 7 doesn't try to load Windows
-              # PowerShell 5.1 modules (causes "TypeData already present"
-              # errors on ARM Windows).
-              PSModulePath: ''
-            inputs:
-              targetType: inline
-              pwsh: true
-              script: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
+          targetType: inline
+          pwsh: true
+          script: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
 
   # Marketplace task: qetza.replacetokens.replacetokens-task.replacetokens@6
   # Requires the "Replace Tokens" extension to be installed in your ADO org.
