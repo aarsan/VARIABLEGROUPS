@@ -13,7 +13,9 @@ pool:
 
 variables:
   KeyVaultName: Progger
-  KeyVaultServiceConnection: 'ahmet-azure-sub (a0fc4f7c-9c55-4151-b900-07761c35237c)'
+  # Service connection id for `ahmet-azure-sub (a0fc4f7c-9c55-4151-b900-07761c35237c)`.
+  # Referencing by id avoids quoting issues with parentheses in the display name.
+  KeyVaultServiceConnection: '9ff0532e-317f-4fe7-8cdb-d772859ae9d8'
 
 stages:
   - stage: Dev
