@@ -97,8 +97,17 @@ if ($ValuesFile) {
 }
 foreach ($k in $Values.Keys) { $allValues[$k] = [string]$Values[$k] }
 
-# --- Validate completeness ---
-$missing = $required | Where-Object { -not $allValues.ContainsKey($_) }
+# Variables listed in -SecretNames are stored in Azure Key Vault (see
+# Publish-VaultSecret.ps1) and pulled by the pipeline at runtime, so they are
+# excluded from the ADO variable group.
+$groupVars = $required | Where-Object { $SecretNames -notcontains $_ }
+if (-not $groupVars) {
+    Write-Warning "All variables for '$Environment' are marked as secrets; nothing to publish to the ADO variable group."
+    return
+}
+
+# --- Validate completeness (only for non-secret vars going into the group) ---
+$missing = $groupVars | Where-Object { -not $allValues.ContainsKey($_) }
 if ($missing) {
     throw "Missing values for required variables: $($missing -join ', ')"
 }
@@ -116,17 +125,12 @@ $existingId = az pipelines variable-group list `
     --group-name $GroupName `
     --query "[0].id" -o tsv 2>$null
 
-function Convert-ToBool { param($v) if ($v) { 'true' } else { 'false' } }
-
 if (-not $existingId) {
     Write-Host "Creating variable group '$GroupName'..." -ForegroundColor Cyan
 
-    # az pipelines variable-group create requires at least one variable up-front
-    # and a single --secrets flag for the whole list. Build the variable
-    # assignments and run create with the first variable, then add the rest.
-    $first      = $required[0]
+    # az pipelines variable-group create requires at least one variable up-front.
+    $first      = $groupVars[0]
     $firstValue = $allValues[$first]
-    $firstIsSecret = $SecretNames -contains $first
 
     $createArgs = @(
         'pipelines','variable-group','create',
@@ -137,19 +141,11 @@ if (-not $existingId) {
     $groupJson = az @createArgs | ConvertFrom-Json
     $groupId   = $groupJson.id
 
-    if ($firstIsSecret) {
-        az pipelines variable-group variable update `
-            --group-id $groupId --name $first --value $firstValue --secret true | Out-Null
-    }
-
-    foreach ($name in $required | Select-Object -Skip 1) {
-        $val      = $allValues[$name]
-        $isSecret = $SecretNames -contains $name
+    foreach ($name in $groupVars | Select-Object -Skip 1) {
         az pipelines variable-group variable create `
             --group-id $groupId `
             --name $name `
-            --value $val `
-            --secret (Convert-ToBool $isSecret) | Out-Null
+            --value $allValues[$name] | Out-Null
     }
 }
 else {
@@ -157,18 +153,32 @@ else {
     Write-Host "Updating variable group '$GroupName' (id $groupId)..." -ForegroundColor Cyan
 
     $existingVars = (az pipelines variable-group variable list --group-id $groupId | ConvertFrom-Json).PSObject.Properties.Name
-    foreach ($name in $required) {
-        $val      = $allValues[$name]
-        $isSecret = $SecretNames -contains $name
+
+    # Add or update the non-secret vars.
+    foreach ($name in $groupVars) {
+        $val = $allValues[$name]
         if ($existingVars -contains $name) {
             az pipelines variable-group variable update `
-                --group-id $groupId --name $name --value $val --secret (Convert-ToBool $isSecret) | Out-Null
+                --group-id $groupId --name $name --value $val --secret false | Out-Null
         } else {
             az pipelines variable-group variable create `
-                --group-id $groupId --name $name --value $val --secret (Convert-ToBool $isSecret) | Out-Null
+                --group-id $groupId --name $name --value $val | Out-Null
+        }
+    }
+
+    # Remove any variable named in -SecretNames that's still present in the
+    # group (it now lives in Key Vault).
+    foreach ($name in $SecretNames) {
+        if ($existingVars -contains $name) {
+            Write-Host "Removing '$name' from group (moved to Key Vault)." -ForegroundColor Yellow
+            az pipelines variable-group variable delete `
+                --group-id $groupId --name $name --yes | Out-Null
         }
     }
 }
 
-Write-Host "Variable group '$GroupName' is ready with $($required.Count) variables." -ForegroundColor Green
-Write-Host "Required: $($required -join ', ')"
+Write-Host "Variable group '$GroupName' is ready with $($groupVars.Count) variable(s)." -ForegroundColor Green
+Write-Host "In group: $($groupVars -join ', ')"
+if ($SecretNames) {
+    Write-Host "In Key Vault (publish separately): $($SecretNames -join ', ')"
+}

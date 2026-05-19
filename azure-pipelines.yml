@@ -1,10 +1,8 @@
 # Builds a web.config for a given environment by:
 #   1. Running Build-WebConfig.ps1 to produce a tokenized web.config
-#   2. Replacing #{...}# tokens with values from the linked variable group
-#   3. Publishing the finished web.config as a pipeline artifact
-#
-# Each stage links the corresponding webconfig-<env> variable group that was
-# created by Publish-VariableGroup.ps1.
+#   2. Pulling env-prefixed secrets from Azure Key Vault and aliasing them
+#   3. Replacing #{...}# tokens with values from the variable group + AKV
+#   4. Publishing the finished web.config as a pipeline artifact
 
 trigger:
   branches:
@@ -12,6 +10,10 @@ trigger:
 
 pool:
   name: Default   # self-hosted agent pool; switch back to `vmImage: windows-latest` once MS-hosted parallelism is granted
+
+variables:
+  KeyVaultName: Progger
+  KeyVaultServiceConnection: 'ahmet-azure-sub (a0fc4f7c-9c55-4151-b900-07761c35237c)'
 
 stages:
   - stage: Dev
@@ -24,6 +26,10 @@ stages:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: dev
+              vaultName: $(KeyVaultName)
+              serviceConnection: $(KeyVaultServiceConnection)
+              secretNames:
+                - DefaultConnection
 
   - stage: Prod
     displayName: Build web.config (prod)
@@ -36,3 +42,8 @@ stages:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: prod
+              vaultName: $(KeyVaultName)
+              serviceConnection: $(KeyVaultServiceConnection)
+              secretNames:
+                - DefaultConnection
+                - StorageConnection
