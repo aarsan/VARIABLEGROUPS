@@ -24,8 +24,8 @@ Build-WebConfig.ps1  ── emits web.config with #{Tokens}#
         │
         ▼
 ADO pipeline
-  ├─ ADO variable group  (non-secret values)
-  └─ AzureKeyVault@2     (env-prefixed secrets, e.g. `dev-DefaultConnection`)
+  ├─ webconfig-<env>          (non-secret values, plain ADO variable group)
+  └─ webconfig-<env>-secrets  (Key-Vault-linked variable group → Progger)
         │
         ▼
 Replace Tokens task
@@ -197,23 +197,29 @@ also deletes any leftover variable in the group that's now listed in
 
 One vault stores secrets for many environments. Storing them as
 `dev-DefaultConnection` / `prod-DefaultConnection` keeps them separated. The
-pipeline's `AzureKeyVault@2` task pulls only the matching prefix per stage
-(via an explicit `secretsFilter` list like `dev-DefaultConnection`), then
-aliases each one back to its bare name (`DefaultConnection`) before the
-token-replacement step. That way the `#{Token}#` names in the generated
-`web.config` stay environment-agnostic.
+`webconfig-<env>-secrets` Key-Vault-linked variable group lists only the
+matching keys per stage, then the pipeline aliases each one back to its bare
+name (`DefaultConnection`) before the token-replacement step. That way the
+`#{Token}#` names in the generated `web.config` stay environment-agnostic.
 
 ---
 
 ## CI pipeline
 
-`azure-pipelines.yml` runs two stages (Dev then Prod). Each stage links the
-matching `webconfig-<env>` variable group, pulls env-prefixed secrets from the
-`Progger` Key Vault via the `AzureKeyVault@2` task, replaces tokens with both
-sets of values via the
+`azure-pipelines.yml` runs two stages (Dev then Prod). Each stage references
+**two** variable groups:
+
+- `webconfig-<env>` — plain ADO group with non-secret values (created by
+  `Publish-VariableGroup.ps1`).
+- `webconfig-<env>-secrets` — **Key-Vault-linked** group that exposes the
+  env-prefixed secrets from the `Progger` vault (e.g. `dev-DefaultConnection`).
+  These groups appear in the **Library** UI with the key icon and a clear
+  link to the vault.
+
+The template aliases each env-prefixed secret to its bare name, runs the
 [`qetza.replacetokens`](https://marketplace.visualstudio.com/items?itemName=qetza.replacetokens-task)
-marketplace task, and publishes the result as an artifact
-(`webconfig-dev` / `webconfig-prod`).
+marketplace task to substitute `#{Token}#` placeholders, and publishes the
+result as an artifact (`webconfig-dev` / `webconfig-prod`).
 
 ```yaml
 trigger:
@@ -223,38 +229,31 @@ trigger:
 pool:
   name: Default   # self-hosted
 
-# Service-connection name and Key Vault name are inlined as template
-# parameters (compile-time) because `AzureKeyVault@2` resolves them during
-# pipeline validation server-side, before runtime `$(...)` macros expand.
 stages:
   - stage: Dev
     variables:
-      - group: webconfig-dev
+      - group: webconfig-dev          # non-secret values
+      - group: webconfig-dev-secrets  # Key-Vault-linked secrets (dev-*)
     jobs:
       - job: Build
         steps:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: dev
-              vaultName: Progger
-              serviceConnection: Ahmet-Azure-Sub-V2
-              secretsFilter: dev-DefaultConnection
               secretNames:
                 - DefaultConnection
 
   - stage: Prod
     dependsOn: Dev
     variables:
-      - group: webconfig-prod
+      - group: webconfig-prod          # non-secret values
+      - group: webconfig-prod-secrets  # Key-Vault-linked secrets (prod-*)
     jobs:
       - job: Build
         steps:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: prod
-              vaultName: Progger
-              serviceConnection: Ahmet-Azure-Sub-V2
-              secretsFilter: prod-DefaultConnection,prod-StorageConnection
               secretNames:
                 - DefaultConnection
                 - StorageConnection
@@ -265,14 +264,16 @@ stages:
 1. Install the **Replace Tokens** marketplace extension
    (`qetza.replacetokens`).
 2. An ARM service connection in ADO whose service principal has the
-   **Key Vault Secrets User** role on the target vault.
+   **Key Vault Secrets User** role on the target vault. This SC is what the
+   Key-Vault-linked variable groups use to read secrets.
 3. Your own user account needs **Key Vault Secrets Officer** (or higher) on
    the vault to run `Publish-VaultSecret.ps1`.
 4. Either an MS-hosted parallelism grant, or a self-hosted agent in a pool
    called `Default`. The included pipeline targets the latter.
-5. The variable groups (`webconfig-dev`, `webconfig-prod`) must be authorized
-   for the pipeline (the first run prompts; permit once). The Key Vault task
-   is authorized via the service connection.
+5. All four variable groups (`webconfig-dev`, `webconfig-dev-secrets`,
+   `webconfig-prod`, `webconfig-prod-secrets`) must be authorized for the
+   pipeline. Use the **Open access** toggle on each group (or it prompts on
+   first run).
 
 ### Notes on PowerShell on ARM Windows
 
