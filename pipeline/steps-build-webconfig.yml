@@ -42,12 +42,17 @@ steps:
           RunAsPreJob: false
 
       - ${{ each name in parameters.secretNames }}:
-          - pwsh: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
+          - task: PowerShell@2
             displayName: Alias secret ${{ name }}
-
-      - ${{ each name in parameters.secretNames }}:
-          - pwsh: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
-            displayName: Alias secret ${{ name }}
+            env:
+              # Clear PSModulePath so pwsh 7 doesn't try to load Windows
+              # PowerShell 5.1 modules (causes "TypeData already present"
+              # errors on ARM Windows).
+              PSModulePath: ''
+            inputs:
+              targetType: inline
+              pwsh: true
+              script: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(${{ parameters.environment }}-${{ name }})"
 
   # Marketplace task: qetza.replacetokens.replacetokens-task.replacetokens@6
   # Requires the "Replace Tokens" extension to be installed in your ADO org.
@@ -66,6 +71,8 @@ steps:
 
   - task: PowerShell@2
     displayName: Print generated web.config (${{ parameters.environment }})
+    env:
+      PSModulePath: ''
     inputs:
       targetType: inline
       pwsh: true
