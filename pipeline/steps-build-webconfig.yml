@@ -5,14 +5,12 @@ parameters:
     type: string
 
 steps:
-  - task: CmdLine@2
+  - task: PowerShell@2
     displayName: Generate tokenized web.config (${{ parameters.environment }})
     inputs:
-      script: >
-        pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass
-        -File "$(Build.SourcesDirectory)\Build-WebConfig.ps1"
-        -Environment ${{ parameters.environment }}
-        -OutputPath "$(Build.ArtifactStagingDirectory)\web.config"
+      filePath: $(Build.SourcesDirectory)/Build-WebConfig.ps1
+      arguments: -Environment ${{ parameters.environment }} -OutputPath $(Build.ArtifactStagingDirectory)/web.config
+      pwsh: true
 
   # Marketplace task: qetza.replacetokens.replacetokens-task.replacetokens@6
   # Requires the "Replace Tokens" extension to be installed in your ADO org.
