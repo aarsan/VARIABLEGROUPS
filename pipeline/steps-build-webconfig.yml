@@ -1,10 +1,13 @@
 # Reusable steps: generate web.config for ${{ parameters.environment }},
-# alias env-prefixed secrets (already pulled by a Key-Vault-linked variable
-# group at stage scope) under their bare names, substitute tokens, and
-# publish as an artifact.
+# alias prefixed secrets (already pulled by Key-Vault-linked variable groups
+# at stage scope) under their bare names, substitute tokens, and publish as
+# an artifact.
 parameters:
   - name: environment
     type: string
+  - name: commonSecretNames
+    type: object
+    default: []
   - name: secretNames
     type: object
     default: []
@@ -22,10 +25,22 @@ steps:
       arguments: -Environment ${{ parameters.environment }} -OutputPath $(Build.ArtifactStagingDirectory)/web.config
       pwsh: true
 
+  # Alias each common-prefixed secret (from `webconfig-common-secrets`) under
+  # its bare name. Done FIRST so env-prefixed aliases below can override.
+  - ${{ each name in parameters.commonSecretNames }}:
+      - task: PowerShell@2
+        displayName: Alias common secret ${{ name }}
+        env:
+          PSModulePath: ''
+        inputs:
+          targetType: inline
+          pwsh: true
+          script: Write-Host "##vso[task.setvariable variable=${{ name }};issecret=true]$(common-${{ name }})"
+
   # Alias each env-prefixed secret variable (e.g. `dev-DefaultConnection`,
   # provided by the `webconfig-<env>-secrets` Key-Vault-linked variable group)
   # under its bare name so the existing #{Token}# names in web.config keep
-  # working.
+  # working. Listed after common aliases so env overrides common.
   - ${{ each name in parameters.secretNames }}:
       - task: PowerShell@2
         displayName: Alias secret ${{ name }}

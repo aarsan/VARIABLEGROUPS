@@ -1,8 +1,5 @@
 {
-  "appSettings": {
-    "EnableFeatureX": "false",
-    "CacheDurationMinutes": "30"
-  },
+  "appSettings": ["EnableFeatureX", "CacheDurationMinutes"],
   "connectionStrings": {
     "DefaultConnection": { "providerName": "System.Data.SqlClient" },
     "StorageConnection": { "providerName": "Custom" }

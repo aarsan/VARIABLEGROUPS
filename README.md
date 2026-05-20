@@ -1,31 +1,39 @@
 # VariableGroups → web.config
 
-A tiny configuration pipeline that turns two JSON files into a fully-populated
-`web.config` for an ASP.NET app, using **Azure DevOps Variable Groups** for
-non-secret config and **Azure Key Vault** for secrets.
+A tiny configuration pipeline that turns a small set of JSON schema files into
+a fully-tokenized `web.config` for an ASP.NET app, using **Azure DevOps
+Variable Groups** for non-secret config and **Azure Key Vault** for secrets.
 
 It solves three problems at once:
 
 1. **Single source of truth for schema** — `config/common.json` lists every
-   appSetting and connection string the app understands (with default values
-   and connection-string `providerName` metadata).
-2. **Zero duplication per environment** — each `config/<env>.json` only declares
-   *which* keys that environment cares about. Values live in ADO + Key Vault.
-3. **Secrets stay in Key Vault** — the repo only contains tokenized config
-   (`#{VarName}#`); connection strings are pulled from AKV at pipeline runtime.
+   appSetting and connection string the app understands (key names + connection
+   string `providerName` metadata). No values live here.
+2. **One mechanism for every value** — every key is emitted as a `#{Token}#`
+   in `web.config` and resolved at pipeline time from ADO + Key Vault. There
+   are no committed values to worry about.
+3. **Secrets stay in Key Vault** — the repo only contains tokenized config;
+   common and env secrets alike are pulled from AKV at pipeline runtime via
+   Key-Vault-linked variable groups.
 
 ```
-config/common.json   ── defaults + connection providerName
-config/dev.json      ── list of keys this env needs
-config/prod.json     ── list of keys this env needs
+config/common.json   ── schema: shared keys + connection providerName
+config/dev.json      ── schema: keys this env adds/overrides
+config/prod.json     ── schema: keys this env adds/overrides
         │
         ▼
-Build-WebConfig.ps1  ── emits web.config with #{Tokens}#
+values.common.json   ── publisher worksheet for shared values    (gitignored)
+values.<env>.json    ── publisher worksheet for env-only values   (gitignored)
         │
         ▼
-ADO pipeline
-  ├─ webconfig-<env>          (non-secret values, plain ADO variable group)
-  └─ webconfig-<env>-secrets  (Key-Vault-linked variable group → Progger)
+Build-WebConfig.ps1  ── emits web.config with #{Tokens}# everywhere
+        │
+        ▼
+ADO pipeline (per stage, in this order — later groups override earlier)
+  ├─ webconfig-common          (non-secret shared defaults)
+  ├─ webconfig-common-secrets  (KV-linked, common-* secrets)
+  ├─ webconfig-<env>           (non-secret env overrides)
+  └─ webconfig-<env>-secrets   (KV-linked, <env>-* secrets)
         │
         ▼
 Replace Tokens task
@@ -40,13 +48,14 @@ web.config artifact  ── ready to deploy
 
 | Path | Purpose |
 | --- | --- |
-| `config/common.json` | Shared defaults + connection-string metadata |
-| `config/dev.json` | List of appSettings + connectionStrings used by `dev` |
-| `config/prod.json` | List of appSettings + connectionStrings used by `prod` |
+| `config/common.json` | Schema: shared key names + connection-string `providerName` metadata |
+| `config/dev.json` | Schema: appSettings + connectionStrings used by `dev` (in addition to common) |
+| `config/prod.json` | Schema: appSettings + connectionStrings used by `prod` (in addition to common) |
 | `Build-WebConfig.ps1` | Generates a tokenized `web.config` for an environment |
-| `Publish-VariableGroup.ps1` | Creates/updates the **non-secret** ADO variable group |
-| `Publish-VaultSecret.ps1` | Uploads the **secret** values to Azure Key Vault |
-| `values.<env>.json` | **Local-only** values for that environment (gitignored) |
+| `Publish-VariableGroup.ps1` | Creates/updates a **non-secret** ADO variable group (`common` or `<env>`) |
+| `Publish-VaultSecret.ps1` | Uploads **secret** values to Azure Key Vault (`common` or `<env>` prefix) |
+| `values.common.json` | **Local-only** publisher worksheet for shared values (gitignored) |
+| `values.<env>.json` | **Local-only** publisher worksheet for env values (gitignored) |
 | `azure-pipelines.yml` | Two-stage CI pipeline (Dev → Prod) |
 | `pipeline/steps-build-webconfig.yml` | Reusable steps template |
 
@@ -56,15 +65,15 @@ web.config artifact  ── ready to deploy
 
 ### `config/common.json`
 
-Holds defaults for keys that don't change per environment, plus structural
-metadata (`providerName`) for every known connection string.
+The schema for keys that exist in every environment. Lists `appSetting` names
+and, for every known connection string, its structural metadata (`providerName`).
+No values live here. Every key listed here becomes a `#{Token}#` in the
+generated `web.config` and is resolved from the `webconfig-common(-secrets)`
+variable groups at pipeline time.
 
 ```json
 {
-  "appSettings": {
-    "EnableFeatureX": "false",
-    "CacheDurationMinutes": "30"
-  },
+  "appSettings": ["EnableFeatureX", "CacheDurationMinutes"],
   "connectionStrings": {
     "DefaultConnection": { "providerName": "System.Data.SqlClient" },
     "StorageConnection": { "providerName": "Custom" }
@@ -74,9 +83,10 @@ metadata (`providerName`) for every known connection string.
 
 ### `config/<env>.json`
 
-Lists which keys this environment overrides (appSettings) or uses
-(connectionStrings). Anything listed here will become a `#{Token}#` in the
-generated `web.config` and a variable in the ADO variable group.
+Keys this environment adds on top of common, or overrides. Anything listed
+here is also emitted as a `#{Token}#` and resolved from `webconfig-<env>(-secrets)`.
+Because the env group is applied **after** the common group, env values win on
+overlapping keys.
 
 ```jsonc
 // config/dev.json
@@ -94,11 +104,17 @@ generated `web.config` and a variable in the ADO variable group.
 }
 ```
 
+Note: connection strings are always env-specific in this design — there's no
+shared connection string list. If two envs happen to use the same name (e.g.
+`DefaultConnection`), each env's value comes from its own `webconfig-<env>-secrets`
+entry.
+
 ### Rules the build script enforces
 
-- An `appSetting` listed in the env file → emitted as `<add key="X" value="#{X}#" />`.
-- An `appSetting` only in `common.json` → emitted with its literal default value.
-- A `connectionString` listed in the env file → emitted with
+- Every `appSetting` from `common.json` is emitted as `<add key="X" value="#{X}#" />`.
+- Every `appSetting` from `<env>.json` is appended (also tokenized) unless it
+  already appeared via common.
+- A `connectionString` listed in `<env>.json` is emitted with
   `connectionString="#{Name}#"` and `providerName` looked up in `common.json`.
 - Referencing a connection string that isn't declared in `common.json` is an
   error — add the `providerName` there first.
@@ -124,7 +140,7 @@ Result (dev):
 <configuration>
   <appSettings>
     <add key="EnableFeatureX" value="#{EnableFeatureX}#" />
-    <add key="CacheDurationMinutes" value="30" />
+    <add key="CacheDurationMinutes" value="#{CacheDurationMinutes}#" />
     <add key="LogLevel" value="#{LogLevel}#" />
     <add key="DevPortalUrl" value="#{DevPortalUrl}#" />
   </appSettings>
@@ -136,10 +152,21 @@ Result (dev):
 </configuration>
 ```
 
-### 2. Provide values in a `values.<env>.json` file
+Every key is a token. None of the values are committed anywhere.
 
-These files are **gitignored** — they are your local copy of what gets
-uploaded to the variable group. Use them as a worksheet before pushing.
+### 2. Provide values in `values.common.json` and `values.<env>.json`
+
+These files are **gitignored** — they're your local worksheet for what gets
+uploaded to the variable groups + Key Vault. Symmetric shape: a flat map of
+`{ "VarName": "value", "…": "…" }`.
+
+```jsonc
+// values.common.json  — values for keys in config/common.json's appSettings
+{
+  "EnableFeatureX": "false",
+  "CacheDurationMinutes": "30"
+}
+```
 
 ```jsonc
 // values.dev.json
@@ -161,28 +188,37 @@ uploaded to the variable group. Use them as a worksheet before pushing.
 }
 ```
 
-The script will refuse to publish if any key listed in `config/<env>.json`
-is missing from `values.<env>.json`.
-
+`Publish-VariableGroup.ps1` will refuse to publish if any required key for
+that scope is missing from the corresponding values file.
 ### 3. Publish: non-secrets to ADO, secrets to Key Vault
 
-The local workflow uses two scripts, one per destination:
+The local workflow uses two scripts, run once per scope (`common`, `dev`, `prod`):
 
 ```powershell
 # one-time: log in
 az login
 az devops login   # (or rely on AZURE_DEVOPS_EXT_PAT env var)
 
-# Push the non-secret variables into the ADO variable group.
-# Anything listed in -SecretNames is EXCLUDED from the group (it goes to AKV).
+# --- common scope (shared defaults) ---
+# Push shared non-secret values into the ADO variable group `webconfig-common`.
+.\Publish-VariableGroup.ps1 `
+    -Environment  common `
+    -Organization aarsan-nw `
+    -Project      Infrastructure
+
+# (No common secrets yet — skip the next call until you add some.)
+# .\Publish-VaultSecret.ps1 -Environment common -VaultName Progger -SecretNames SharedApiKey
+
+# --- dev scope ---
+# Push dev non-secret values; anything in -SecretNames is EXCLUDED from the group
+# (it goes to AKV instead).
 .\Publish-VariableGroup.ps1 `
     -Environment  dev `
     -Organization aarsan-nw `
     -Project      Infrastructure `
     -SecretNames  DefaultConnection
 
-# Push the secret values into Azure Key Vault, prefixed by environment
-# (e.g. `dev-DefaultConnection`). The pipeline strips the prefix at runtime.
+# Push dev secrets to AKV, prefixed with the scope (e.g. `dev-DefaultConnection`).
 .\Publish-VaultSecret.ps1 `
     -Environment dev `
     -VaultName   Progger `
@@ -193,38 +229,40 @@ Re-running either script updates values in place. `Publish-VariableGroup.ps1`
 also deletes any leftover variable in the group that's now listed in
 `-SecretNames` (because it should only live in AKV from now on).
 
-#### Why env-prefix the AKV secret names?
+#### Why prefix the AKV secret names?
 
-One vault stores secrets for many environments. Storing them as
-`dev-DefaultConnection` / `prod-DefaultConnection` keeps them separated. The
-`webconfig-<env>-secrets` Key-Vault-linked variable group lists only the
-matching keys per stage, then the pipeline aliases each one back to its bare
-name (`DefaultConnection`) before the token-replacement step. That way the
-`#{Token}#` names in the generated `web.config` stay environment-agnostic.
-
+One vault stores secrets for many scopes. Storing them as
+`common-SharedApiKey` / `dev-DefaultConnection` / `prod-DefaultConnection`
+keeps them separated. Each KV-linked variable group lists only the matching
+prefix per scope, and the pipeline aliases each one back to its bare name
+(`SharedApiKey`, `DefaultConnection`) before the token-replacement step. That
+way the `#{Token}#` names in the generated `web.config` stay scope-agnostic.
 ---
 
 ## CI pipeline
 
 `azure-pipelines.yml` runs two stages (Dev then Prod). Each stage references
-**two** variable groups:
+**four** variable groups, applied in order so later groups override earlier:
 
-- `webconfig-<env>` — plain ADO group with non-secret values (created by
-  `Publish-VariableGroup.ps1`).
-- `webconfig-<env>-secrets` — **Key-Vault-linked** group that exposes the
-  env-prefixed secrets from the `Progger` vault (e.g. `dev-DefaultConnection`).
-  These groups appear in the **Library** UI with the key icon and a clear
-  link to the vault.
+1. `webconfig-common` — plain ADO group with shared non-secret values
+   (created by `Publish-VariableGroup.ps1 -Environment common`).
+2. `webconfig-common-secrets` — **Key-Vault-linked** group exposing `common-*`
+   secrets from the vault.
+3. `webconfig-<env>` — plain ADO group with env-specific non-secret values.
+4. `webconfig-<env>-secrets` — **Key-Vault-linked** group exposing `<env>-*`
+   secrets.
 
-> **Why two groups per env?** ADO's "link to Azure Key Vault" toggle is
+> **Why two groups per scope?** ADO's "link to Azure Key Vault" toggle is
 > all-or-nothing per variable group: when it's on, *every* variable in the
 > group must come from the vault and you can't add plain literal values
 > alongside them. The standard pattern is therefore one plain group for
 > non-secrets + one KV-linked group for secrets, both referenced together in
 > the stage. They merge into the same variable scope at runtime, so steps
-> just see `$(LogLevel)` and `$(dev-DefaultConnection)` side by side.
+> just see `$(LogLevel)`, `$(common-CacheDurationMinutes)` and
+> `$(dev-DefaultConnection)` side by side.
 
-The template aliases each env-prefixed secret to its bare name, runs the
+The template aliases each `common-*` and `<env>-*` secret to its bare name
+(common first, env second — so env wins), then runs the
 [`qetza.replacetokens`](https://marketplace.visualstudio.com/items?itemName=qetza.replacetokens-task)
 marketplace task to substitute `#{Token}#` placeholders, and publishes the
 result as an artifact (`webconfig-dev` / `webconfig-prod`).
@@ -240,28 +278,34 @@ pool:
 stages:
   - stage: Dev
     variables:
-      - group: webconfig-dev          # non-secret values
-      - group: webconfig-dev-secrets  # Key-Vault-linked secrets (dev-*)
+      - group: webconfig-common          # shared non-secret defaults
+      - group: webconfig-common-secrets  # KV-linked shared secrets (common-*)
+      - group: webconfig-dev             # dev-specific non-secrets (overrides common)
+      - group: webconfig-dev-secrets     # KV-linked dev secrets (dev-*)
     jobs:
       - job: Build
         steps:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: dev
+              commonSecretNames: []      # add names here once common secrets exist
               secretNames:
                 - DefaultConnection
 
   - stage: Prod
     dependsOn: Dev
     variables:
-      - group: webconfig-prod          # non-secret values
-      - group: webconfig-prod-secrets  # Key-Vault-linked secrets (prod-*)
+      - group: webconfig-common
+      - group: webconfig-common-secrets
+      - group: webconfig-prod
+      - group: webconfig-prod-secrets
     jobs:
       - job: Build
         steps:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: prod
+              commonSecretNames: []
               secretNames:
                 - DefaultConnection
                 - StorageConnection
@@ -278,10 +322,10 @@ stages:
    the vault to run `Publish-VaultSecret.ps1`.
 4. Either an MS-hosted parallelism grant, or a self-hosted agent in a pool
    called `Default`. The included pipeline targets the latter.
-5. All four variable groups (`webconfig-dev`, `webconfig-dev-secrets`,
-   `webconfig-prod`, `webconfig-prod-secrets`) must be authorized for the
-   pipeline. Use the **Open access** toggle on each group (or it prompts on
-   first run).
+5. All six variable groups (`webconfig-common`, `webconfig-common-secrets`,
+   `webconfig-dev`, `webconfig-dev-secrets`, `webconfig-prod`,
+   `webconfig-prod-secrets`) must be authorized for the pipeline. Use the
+   **Open access** toggle on each group (or it prompts on first run).
 
 ### Notes on PowerShell on ARM Windows
 
@@ -295,19 +339,21 @@ PowerShell 7. This is required on native ARM64 agents to avoid
 ## End-to-end checklist
 
 ```text
-1. Edit config/common.json   ── add new keys + providerName metadata
-2. Edit config/<env>.json    ── list keys this env should tokenize
-3. Edit values.<env>.json    ── supply real values (local only)
-4. Publish-VariableGroup.ps1 ── push non-secret values to ADO
-5. Publish-VaultSecret.ps1   ── push secrets to Azure Key Vault (env-prefixed)
-6. git push                  ── pipeline regenerates + publishes web.config
+1. Edit config/common.json    ── add new shared keys + providerName metadata
+2. Edit config/<env>.json     ── list keys this env adds/overrides
+3. Edit values.common.json    ── supply real shared values  (local only)
+4. Edit values.<env>.json     ── supply real env values     (local only)
+5. Publish-VariableGroup.ps1  ── push non-secrets to ADO (run per scope)
+6. Publish-VaultSecret.ps1    ── push secrets to AKV    (run per scope, prefixed)
+7. git push                   ── pipeline regenerates + publishes web.config
 ```
 
 ---
 
 ## Secrets hygiene
 
-- `values.*.json`, `web.config`, and `.env` are gitignored.
+- All `values.*.json` files (including `values.common.json`), `web.config`,
+  and `.env` are gitignored. No values — secret or otherwise — are committed.
 - Anything listed in `-SecretNames` is **excluded from the ADO variable group**
   and pushed to Key Vault instead. The pipeline pulls it at runtime via the
   service connection's SP.

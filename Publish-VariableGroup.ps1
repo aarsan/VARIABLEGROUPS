@@ -1,22 +1,31 @@
 <#
 .SYNOPSIS
     Create or update an Azure DevOps Variable Group containing the values
-    needed by the tokens in the generated web.config for a given environment.
+    needed by the tokens in the generated web.config.
 
 .DESCRIPTION
-    Reads config/common.json + config/<Environment>.json to determine which
-    variable names the environment needs (every key listed in the env file
-    becomes a variable, plus every connection string name). It then creates
-    or updates an ADO variable group with those variables.
+    Two shapes are supported, selected by -Environment:
+
+      * -Environment common
+          Reads config/common.json and treats its `appSettings` array as the
+          required variable names. Default group name: webconfig-common.
+          Connection strings are NOT included — they are always env-specific.
+
+      * -Environment <env> (e.g. dev, prod)
+          Reads config/<env>.json and treats both its `appSettings` and
+          `connectionStrings` arrays as the required variable names. Default
+          group name: webconfig-<env>.
 
     Values can be supplied via:
       -ValuesFile  : a JSON file mapping { "VarName": "value", ... }
       -Values      : an inline hashtable @{ VarName = 'value'; ... }
 
-    Variables whose name appears in -SecretNames are stored as secret.
+    Variables whose name appears in -SecretNames are EXCLUDED from the group
+    (they belong in Azure Key Vault — see Publish-VaultSecret.ps1).
 
 .PARAMETER Environment
-    Environment name (matches config/<Environment>.json).
+    Environment name. Use 'common' for shared defaults; otherwise an env name
+    that matches config/<Environment>.json.
 
 .PARAMETER Organization
     Azure DevOps organization. Accepts either a short name (e.g. 'contoso')
@@ -29,20 +38,28 @@
     Variable group name. Defaults to "webconfig-<Environment>".
 
 .PARAMETER ValuesFile
-    Path to a JSON file containing variable values.
+    Path to a JSON file containing variable values. Defaults to
+    values.<Environment>.json next to this script.
 
 .PARAMETER Values
     Hashtable of variable values (alternative to -ValuesFile).
 
 .PARAMETER SecretNames
-    Names of variables that should be stored as secrets.
+    Names of variables that should be stored in Key Vault instead.
 
 .EXAMPLE
+    # Publish shared non-secret defaults
+    .\Publish-VariableGroup.ps1 `
+        -Environment common `
+        -Organization https://dev.azure.com/contoso `
+        -Project MyProject
+
+.EXAMPLE
+    # Publish prod-specific non-secrets; DefaultConnection / StorageConnection go to AKV
     .\Publish-VariableGroup.ps1 `
         -Environment prod `
         -Organization https://dev.azure.com/contoso `
         -Project MyProject `
-        -ValuesFile .\values.prod.json `
         -SecretNames DefaultConnection,StorageConnection
 #>
 [CmdletBinding()]
@@ -71,21 +88,28 @@ if (-not $extList) {
     az extension add --name azure-devops | Out-Null
 }
 
-# --- Determine required variable names from the env manifest ---
+# --- Determine required variable names from the schema ---
 function Read-Json {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { throw "Config file not found: $Path" }
     return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
 }
 
-$envCfg = Read-Json (Join-Path $ConfigDir "$Environment.json")
 $required = @()
-$required += @($envCfg.appSettings)
-$required += @($envCfg.connectionStrings)
+if ($Environment -eq 'common') {
+    # config/common.json: appSettings is an array; connectionStrings are env-specific.
+    $commonCfg = Read-Json (Join-Path $ConfigDir 'common.json')
+    $required += @($commonCfg.appSettings)
+}
+else {
+    $envCfg = Read-Json (Join-Path $ConfigDir "$Environment.json")
+    $required += @($envCfg.appSettings)
+    $required += @($envCfg.connectionStrings)
+}
 $required = $required | Where-Object { $_ } | Select-Object -Unique
 
 if (-not $required) {
-    throw "No tokenized variables found in $Environment.json."
+    throw "No tokenized variables found for '$Environment'."
 }
 
 # --- Merge values from file + inline ---

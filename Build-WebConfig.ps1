@@ -1,26 +1,34 @@
 <#
 .SYNOPSIS
-    Build a web.config from config/common.json + config/<Environment>.json.
+    Build a tokenized web.config from config/common.json + config/<Environment>.json.
 
 .DESCRIPTION
-    common.json supplies:
-      - appSettings:        literal default values shared by all environments
-      - connectionStrings:  structural metadata (providerName) for known connections
+    config/common.json is the schema. It supplies:
+      - appSettings:        names of keys known to the app (string array).
+                            These are always emitted as #{Key}# tokens and are
+                            resolved at pipeline time from the `webconfig-common`
+                            and `webconfig-common-secrets` variable groups.
+      - connectionStrings:  structural metadata (providerName) for known
+                            connections (object keyed by name).
 
-    <env>.json declares which keys/connections apply to that environment:
+    config/<env>.json declares which keys/connections apply to that
+    environment:
       {
-        "appSettings":       [ "<key>", ... ],
-        "connectionStrings": [ "<name>", ... ]
+        "appSettings":       [ "<key>", ... ],   # env overrides for common keys
+        "connectionStrings": [ "<name>", ... ]   # connection strings this env uses
       }
 
     Rules:
-      * An appSetting listed in the env file is emitted as #{Key}# (ADO token).
-      * An appSetting NOT in the env file but present in common is emitted with
-        the common literal value.
-      * A connectionString listed in the env file is emitted with
+      * Every appSetting from common.json is emitted as <add key="X" value="#{X}#" />.
+      * Any appSetting only in <env>.json is appended (also as #{Token}#).
+        Env-only keys are resolved from `webconfig-<env>` / `webconfig-<env>-secrets`.
+      * Common keys that also appear in <env>.json are resolved from the env
+        group at pipeline time (variable groups are applied in order; common is
+        listed first, env second, so env wins).
+      * A connectionString listed in <env>.json is emitted with
         connectionString="#{Name}#" and providerName from common.json.
-        New connection strings can be added by declaring their providerName
-        in common.json first.
+        Referencing a connection string that isn't declared in common.json is
+        an error — add the providerName there first.
 
 .PARAMETER Environment
     Environment name; resolves to config/<Environment>.json.
@@ -58,18 +66,15 @@ function ConvertTo-OrderedHash {
 $common = Read-Json (Join-Path $ConfigDir 'common.json')
 $envCfg = Read-Json (Join-Path $ConfigDir "$Environment.json")
 
-$commonAppSettings = ConvertTo-OrderedHash $common.appSettings
+$commonAppKeys     = @($common.appSettings)
 $commonConnStrings = ConvertTo-OrderedHash $common.connectionStrings
 
 $envAppKeys  = @($envCfg.appSettings)
 $envConnKeys = @($envCfg.connectionStrings)
 
-# --- Build merged appSettings (preserve common order, then append env-only keys) ---
+# --- Build merged appSettings (every key is a token; common order first, then env-only) ---
 $appSettings = [ordered]@{}
-foreach ($k in $commonAppSettings.Keys) {
-    if ($envAppKeys -contains $k) { $appSettings[$k] = "#{$k}#" }
-    else                          { $appSettings[$k] = [string]$commonAppSettings[$k] }
-}
+foreach ($k in $commonAppKeys) { $appSettings[$k] = "#{$k}#" }
 foreach ($k in $envAppKeys) {
     if (-not $appSettings.Contains($k)) { $appSettings[$k] = "#{$k}#" }
 }

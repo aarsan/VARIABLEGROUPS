@@ -1,10 +1,12 @@
 # Builds a web.config for a given environment by:
-#   1. Running Build-WebConfig.ps1 to produce a tokenized web.config
-#   2. Pulling non-secret values from the `webconfig-<env>` variable group
-#   3. Pulling env-prefixed secrets from the `webconfig-<env>-secrets`
-#      variable group (linked to Azure Key Vault `Progger`)
-#   4. Aliasing env-prefixed secrets back to their bare names and replacing
-#      #{...}# tokens
+#   1. Running Build-WebConfig.ps1 to produce a fully tokenized web.config
+#   2. Pulling non-secret values from `webconfig-common` (shared defaults) and
+#      `webconfig-<env>` (env-specific overrides). Env wins on overlapping keys
+#      because the env group is listed AFTER the common group.
+#   3. Pulling prefixed secrets from `webconfig-common-secrets` and
+#      `webconfig-<env>-secrets` (both linked to Azure Key Vault `Progger`)
+#   4. Aliasing common-* and <env>-* secrets back to their bare names and
+#      replacing #{...}# tokens
 #   5. Publishing the finished web.config as a pipeline artifact
 
 trigger:
@@ -18,14 +20,17 @@ stages:
   - stage: Dev
     displayName: Build web.config (dev)
     variables:
-      - group: webconfig-dev          # non-secret values
-      - group: webconfig-dev-secrets  # Key-Vault-linked secrets (dev-*)
+      - group: webconfig-common          # shared non-secret defaults
+      - group: webconfig-common-secrets  # KV-linked shared secrets (common-*)
+      - group: webconfig-dev             # dev-specific non-secrets (overrides common)
+      - group: webconfig-dev-secrets     # KV-linked dev secrets (dev-*)
     jobs:
       - job: Build
         steps:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: dev
+              commonSecretNames: []      # add names here once common secrets exist
               secretNames:
                 - DefaultConnection
 
@@ -33,14 +38,17 @@ stages:
     displayName: Build web.config (prod)
     dependsOn: Dev
     variables:
-      - group: webconfig-prod          # non-secret values
-      - group: webconfig-prod-secrets  # Key-Vault-linked secrets (prod-*)
+      - group: webconfig-common          # shared non-secret defaults
+      - group: webconfig-common-secrets  # KV-linked shared secrets (common-*)
+      - group: webconfig-prod            # prod-specific non-secrets (overrides common)
+      - group: webconfig-prod-secrets    # KV-linked prod secrets (prod-*)
     jobs:
       - job: Build
         steps:
           - template: pipeline/steps-build-webconfig.yml
             parameters:
               environment: prod
+              commonSecretNames: []      # add names here once common secrets exist
               secretNames:
                 - DefaultConnection
                 - StorageConnection
